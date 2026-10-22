@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Project Sovereign - Autonomous Multi-Agent Engine</title>
+    <!-- React & Babel CDN -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome Icons -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans antialiased min-h-screen">
+<div id="root"></div>
+
+<script type="text/babel">
+    const { useState, useEffect } = React;
+
+    function App() {
+        const [view, setView] = useState('login'); // login | consent | execution | dashboard
+        const [userRole, setUserRole] = useState('Corporate Treasurer');
+        const [consentGranted, setConsentGranted] = useState(false);
+        const [initiationStep, setInitiationStep] = useState(1);
+
+        const [accounts, setAccounts] = useState([]);
+        const [auditLogs, setAuditLogs] = useState([]);
+        const [pendingApprovals, setPendingApprovals] = useState([]);
+        const [loading, setLoading] = useState(false);
+
+        useEffect(() => {
+            if (view === 'dashboard') {
+                loadInitialData();
+                setupEventSource();
+            }
+        }, [view]);
+
+        const setupEventSource = () => {
+            try {
+                const eventSource = new EventSource('/api/v1/sovereign/stream-audit');
+                eventSource.addEventListener('agent-trace', (e) => {
+                    const trace = JSON.parse(e.data);
+                    setAuditLogs(prev => [trace, ...prev]);
+                });
+                return () => eventSource.close();
+            } catch (err) {
+                console.warn("SSE stream error:", err);
+            }
+        };
+
+        const loadInitialData = async () => {
+            try {
+                await Promise.all([fetchAccounts(), fetchPending()]);
+            } catch (err) {
+                console.error("Data fetch error:", err);
+            }
+        };
+
+        const fetchAccounts = async () => {
+            const res = await fetch('/api/v1/emach/open-banking/customers/CUST_IN_9901/accounts');
+            if (res.ok) setAccounts(await res.json());
+        };
+
+        const fetchPending = async () => {
+            const res = await fetch('/api/v1/sovereign/sweeps/pending');
+            if (res.ok) setPendingApprovals(await res.json());
+        };
+
+        const triggerSweep = async () => {
+            setLoading(true);
+            setAuditLogs([]);
+            try {
+                await fetch('/api/v1/sovereign/sweeps/evaluate/CUST_IN_9901', { method: 'POST' });
+                await fetchPending();
+                await fetchAccounts();
+            } catch (err) {
+                console.error("Sweep execution failed:", err);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        const confirmApproval = async (executionId, approved) => {
+            try {
+                await fetch(`/api/v1/sovereign/sweeps/confirm/${executionId}?approved=${approved}`, { method: 'POST' });
+                await fetchPending();
+                await fetchAccounts();
+            } catch (err) {
+                console.error("Confirmation failed:", err);
+            }
+        };
+
+        // --- 1. LOGIN SCREEN ---
+        if (view === 'login') {
+            return (
+                <div className="flex items-center justify-center min-h-screen bg-slate-950 p-6">
+                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 max-w-md w-full shadow-2xl space-y-6">
+                        <div className="text-center">
+                            <div className="inline-flex items-center justify-center w-16 h-16 rounded-xl bg-indigo-600/20 text-indigo-400 mb-4 border border-indigo-500/30">
+                                <i className="fas fa-university text-3xl"></i>
+                            </div>
+                            <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">
+                                SOVEREIGN PORTAL
+                            </h1>
+                            <p className="text-xs text-slate-400 mt-1">Autonomous Multi-Agent Liquidity Platform</p>
+                        </div>
+
+                        <form onSubmit={(e) => { e.preventDefault(); setView('consent'); }} className="space-y-4">
+                            <div>
+                                <label className="text-xs font-semibold text-slate-300 block mb-1">Corporate Client ID</label>
+                                <input type="text" defaultValue="CUST_IN_9901" disabled className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2.5 text-sm text-slate-300 focus:outline-none" />
+                            </div>
+                            <div>
+                                <label className="text-xs font-semibold text-slate-300 block mb-1">User Role</label>
+                                <select
+                                    value={userRole}
+                                    onChange={(e) => setUserRole(e.target.value)}
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500">
+                                    <option>Corporate Treasurer (Maker)</option>
+                                    <option>Chief Risk Officer (Checker)</option>
+                                    <option>System Administrator</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="text-xs font-semibold text-slate-300 block mb-1">Authentication Credentials</label>
+                                <input type="password" defaultValue="••••••••••••" className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2.5 text-sm text-slate-300 focus:outline-none" />
+                            </div>
+                            <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-3 rounded-lg shadow-lg transition flex items-center justify-center gap-2">
+                                <i className="fas fa-key"></i> Authenticate & Authorize
+                            </button>
+                        </form>
+                        <p className="text-center text-xs text-slate-500">Secured with OAuth2.0 / Mutual TLS (mTLS) Standard</p>
+                    </div>
+                </div>
+            );
+        }
+
+        // --- 2. OPEN BANKING CONSENT & INITIATION FLOW ---
+        if (view === 'consent') {
+            return (
+                <div className="flex items-center justify-center min-h-screen bg-slate-950 p-6">
+                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 max-w-2xl w-full shadow-2xl space-y-6">
+                        <div className="flex justify-between items-center border-b border-slate-800 pb-4">
+                            <div className="flex items-center gap-3">
+                                <i className="fas fa-shield-alt text-2xl text-emerald-400"></i>
+                                <div>
+                                    <h2 className="text-lg font-bold text-white">Open Banking Gateway</h2>
+                                    <p className="text-xs text-slate-400">ISO 20022 Account Access & Payment Consent</p>
+                                </div>
+                            </div>
+                            <span className="text-xs font-mono px-3 py-1 rounded-full bg-indigo-950 text-indigo-400 border border-indigo-800/50">
+                                Step {initiationStep} of 2
+                            </span>
+                        </div>
+
+                        {initiationStep === 1 ? (
+                            <div className="space-y-4">
+                                <p className="text-sm text-slate-300">
+                                    Project Sovereign requires authorization to query balances and initiate automated sweep transactions across your connected banking endpoints:
+                                </p>
+
+                                <div className="space-y-2">
+                                    {[
+                                        { name: "ABC", iban: "AE21 0260 0000 1234 5678 901", permissions: "Read / Write (Liquidity Sweeps)" },
+                                        { name: "EFG", iban: "AE44 0200 0000 9876 5432 109", permissions: "Read / Write (High Yield Reserve)" },
+                                        { name: "HIJ", iban: "AE03 0030 0000 4567 8901 234", permissions: "Read / Write (Operational Vault)" }
+                                    ].map((bank, i) => (
+                                        <div key={i} className="flex justify-between items-center bg-slate-950 p-3.5 rounded-lg border border-slate-800">
+                                            <div>
+                                                <p className="text-sm font-bold text-white">{bank.name}</p>
+                                                <p className="text-xs font-mono text-slate-500">{bank.iban}</p>
+                                            </div>
+                                            <span className="text-xs text-emerald-400 bg-emerald-950/50 px-2.5 py-1 rounded border border-emerald-800/40">
+                                                {bank.permissions}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                <div className="bg-slate-950 p-4 rounded-lg border border-slate-800 space-y-2 text-xs text-slate-400">
+                                    <div className="flex items-center gap-2 text-slate-200 font-semibold">
+                                        <i className="fas fa-lock text-indigo-400"></i> Open Banking Security Guarantees
+                                    </div>
+                                    <p>• Consent valid for 90 days under Central Bank regulations.</p>
+                                    <p>• Multi-agent execution enforced with strict Maker-Checker thresholds ($500,000 max auto-execution).</p>
+                                </div>
+
+                                <div className="flex gap-3 pt-2">
+                                    <button onClick={() => setView('login')} className="w-1/3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold py-2.5 rounded-lg text-sm transition">
+                                        Back
+                                    </button>
+                                    <button onClick={() => setInitiationStep(2)} className="w-2/3 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2.5 rounded-lg text-sm transition flex items-center justify-center gap-2">
+                                        Authorize Open Banking Consent <i className="fas fa-arrow-right"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="space-y-6">
+                                <div className="bg-slate-950 p-5 rounded-xl border border-emerald-500/30 text-center space-y-3">
+                                    <i className="fas fa-check-circle text-4xl text-emerald-400"></i>
+                                    <h3 className="text-lg font-bold text-white">Consent Token Generated Successfully</h3>
+                                    <p className="text-xs font-mono text-indigo-400 bg-slate-900 p-2 rounded border border-slate-800">
+                                        urn:emach:consent:e3f890a2-8911-4c12-a128-sovereign2026
+                                    </p>
+                                </div>
+
+                                <div className="space-y-2 text-xs text-slate-400">
+                                    <div className="flex justify-between border-b border-slate-800 pb-2">
+                                        <span>Initiation Status:</span>
+                                        <span className="text-emerald-400 font-bold">READY_FOR_ORCHESTRATION</span>
+                                    </div>
+                                    <div className="flex justify-between border-b border-slate-800 pb-2">
+                                        <span>Active Engine:</span>
+                                        <span className="text-indigo-400 font-bold"> Multi-Agent Core</span>
+                                    </div>
+                                </div>
+
+                                <button onClick={() => setView('dashboard')} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-3 rounded-lg shadow-lg transition flex items-center justify-center gap-2">
+                                    Launch Sovereign Liquidity Dashboard <i className="fas fa-chart-line"></i>
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        // --- 3. MAIN DASHBOARD SCREEN ---
+        return (
+            <div className="max-w-7xl mx-auto p-6 space-y-6">
+                {/* Header Bar */}
+                <header className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-slate-800 pb-4 gap-4">
+                    <div>
+                        <div className="flex items-center gap-3">
+                            <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">
+                                PROJECT SOVEREIGN
+                            </h1>
+                            <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800/60 font-mono">
+                                Consent Active
+                            </span>
+                        </div>
+                        <p className="text-sm text-slate-400 mt-1">Autonomous Multi-Agent Liquidity Engine</p>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                        <div className="text-right hidden sm:block">
+                            <p className="text-xs font-bold text-slate-200">{userRole}</p>
+                            <p className="text-xs text-slate-500">CUST_IN_9901</p>
+                        </div>
+                        <button
+                            onClick={triggerSweep}
+                            disabled={loading}
+                            className="bg-indigo-600 hover:bg-indigo-500 text-white font-medium px-5 py-2.5 rounded-lg shadow-lg flex items-center gap-2 transition disabled:opacity-50">
+                            <i className={`fas ${loading ? 'fa-spinner fa-spin' : 'fa-bolt'}`}></i>
+                            {loading ? 'Agents Evaluating...' : 'Run Autonomous Sweep'}
+                        </button>
+                        <button onClick={() => setView('login')} className="bg-slate-800 hover:bg-slate-700 text-slate-400 p-2.5 rounded-lg transition" title="Logout">
+                            <i className="fas fa-sign-out-alt"></i>
+                        </button>
+                    </div>
+                </header>
+
+                {/* Open Banking Connected Balances */}
+                <section className="space-y-3">
+                    <div className="flex justify-between items-center">
+                        <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400">
+                            Connected Open Banking Accounts (ISO 20022 Stream)
+                        </h2>
+                        <button onClick={fetchAccounts} className="text-xs text-indigo-400 hover:underline flex items-center gap-1">
+                            <i className="fas fa-sync-alt"></i> Refresh Balances
+                        </button>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {accounts.map(acc => (
+                            <div key={acc.accountId} className="bg-slate-900 border border-slate-800 p-5 rounded-xl hover:border-slate-700 transition">
+                                <div className="flex justify-between items-start mb-2">
+                                    <span className="text-xs font-semibold px-2.5 py-1 rounded bg-slate-800 text-slate-300">{acc.type}</span>
+                                    <span className="text-xs font-bold text-emerald-400">{(acc.apyPercentage * 100).toFixed(1)}% APY</span>
+                                </div>
+                                <h3 className="text-lg font-bold text-white">{acc.bankName}</h3>
+                                <p className="text-2xl font-extrabold text-indigo-400 mt-2">
+                                    ${Number(acc.balance).toLocaleString('en-US', {minimumFractionDigits: 2})}
+                                </p>
+                                <p className="text-xs text-slate-500 mt-1 font-mono">ID: {acc.accountId}</p>
+                            </div>
+                        ))}
+                    </div>
+                </section>
+
+                {/* Maker-Checker Governance Approval Banner */}
+                {pendingApprovals.length > 0 && (
+                    <div className="bg-amber-950/40 border border-amber-800/60 p-6 rounded-xl space-y-4">
+                        <div className="flex justify-between items-center">
+                            <h2 className="text-lg font-bold text-amber-400 flex items-center gap-2">
+                                <i className="fas fa-user-shield"></i> Maker-Checker Governance Approval Required
+                            </h2>
+                            <span className="text-xs bg-amber-900/60 text-amber-300 px-3 py-1 rounded-full font-semibold">
+                                {pendingApprovals.length} Pending
+                            </span>
+                        </div>
+                        {pendingApprovals.map(req => (
+                            <div key={req.executionId} className="flex flex-col md:flex-row justify-between items-start md:items-center bg-slate-900/90 p-4 rounded-lg border border-amber-900/40 gap-4">
+                                <div>
+                                    <p className="text-sm font-semibold text-slate-200">
+                                        Transfer <span className="text-amber-400 font-bold">${Number(req.sweepAmount).toLocaleString()}</span> from <span className="text-indigo-400">{req.sourceBank}</span> to <span className="text-emerald-400">{req.targetBank}</span>
+                                    </p>
+                                    <p className="text-xs text-slate-400 mt-1">
+                                        Projected Gain: <span className="text-emerald-400 font-bold">+${req.calculatedAnnualGainUsd}/yr</span> | Risk Score: <span className="text-slate-300 font-mono">0.02 (Low)</span>
+                                    </p>
+                                </div>
+                                <div className="flex gap-2 w-full md:w-auto">
+                                    <button onClick={() => confirmApproval(req.executionId, true)} className="flex-1 md:flex-none bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded text-xs font-bold transition">
+                                        Confirm & Authorize
+                                    </button>
+                                    <button onClick={() => confirmApproval(req.executionId, false)} className="flex-1 md:flex-none bg-rose-600 hover:bg-rose-500 text-white px-4 py-2 rounded text-xs font-bold transition">
+                                        Reject
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {/* Autonomous Agent Thought Stream */}
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
+                    <div className="flex justify-between items-center">
+                        <h2 className="text-lg font-bold text-slate-200 flex items-center gap-2">
+                            <i className="fas fa-brain text-indigo-400"></i> Multi-Agent Thought Stream (Execution Engine)
+                        </h2>
+                        <span className="text-xs text-slate-500 font-mono">SSE Stream Active</span>
+                    </div>
+                    <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
+                        {auditLogs.length === 0 ? (
+                            <p className="text-sm text-slate-500 italic py-4 text-center">
+                                No active execution trace. Click "Run Autonomous Sweep" above to trigger agent evaluation.
+                            </p>
+                        ) : (
+                            auditLogs.map((log, idx) => (
+                                <div key={idx} className="bg-slate-950 p-4 rounded-lg border border-slate-800/80 text-sm flex gap-3">
+                                    <div className="mt-1">
+                                        <i className={`fas ${
+                                            log.agentId === 'LiquidityEvaluator' ? 'fa-wallet text-blue-400' :
+                                            log.agentId === 'YieldOptimizer' ? 'fa-chart-line text-emerald-400' : 'fa-shield-halved text-amber-400'
+                                        }`}></i>
+                                    </div>
+                                    <div>
+                                        <div className="flex items-center gap-2">
+                                            <span className="font-bold text-slate-200">{log.agentRole}</span>
+                                            <span className="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-400">{log.phase}</span>
+                                        </div>
+                                        <p className="text-slate-300 mt-1">{log.reasoning}</p>
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
